@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Samsung Mirror</title>
+<style>
+  :root { color-scheme: dark; --bg:#111; --fg:#eee; --btn:#2a2a2e; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:16px -apple-system, system-ui, sans-serif; }
+  body { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  #screen { height:calc(100dvh - 100px); max-width:100%; border-radius:18px; touch-action:none; user-select:none; -webkit-user-select:none; background:#000; }
+  #msg { position:absolute; top:40%; text-align:center; padding:0 24px; color:#aaa; pointer-events:none; }
+  nav { display:flex; gap:12px; }
+  button { background:var(--btn); color:var(--fg); border:0; border-radius:12px; padding:12px 26px; font-size:18px; }
+  button:active { background:#444; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="720" height="1560"></canvas>
+<div id="msg">Connecting…</div>
+<nav>
+  <button data-key="4">◀ Back</button>
+  <button data-key="3">● Home</button>
+  <button data-key="187">▢ Recents</button>
+  <button data-key="26">⏻ Power</button>
+</nav>
+<script>
+const canvas = document.getElementById('screen'), ctx = canvas.getContext('2d'), msg = document.getElementById('msg');
+let ws, size = null, down = null, gotFrame = false;
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/viewer');
+  ws.onmessage = async (e) => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data);
+      if (m.type !== 'status') return;
+      size = m.w ? { w: m.w, h: m.h } : null;
+      if (!m.agent) { gotFrame = false; msg.hidden = false; msg.textContent = 'Phone agent offline. Start agent.js on your home computer.'; }
+      else if (!gotFrame) { msg.hidden = false; msg.textContent = 'Waiting for the phone screen…'; }
+      return;
+    }
+    const bmp = await createImageBitmap(e.data);
+    if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    if (!gotFrame) { gotFrame = true; msg.hidden = true; }
+  };
+  ws.onclose = () => { gotFrame = false; msg.hidden = false; msg.textContent = 'Reconnecting…'; setTimeout(connect, 2000); };
+}
+connect();
+
+const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
+function toDevice(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * size.w, y: (e.clientY - r.top) / r.height * size.h };
+}
+canvas.addEventListener('pointerdown', (e) => {
+  if (!size) return;
+  canvas.setPointerCapture(e.pointerId);
+  down = { ...toDevice(e), t: Date.now() };
+});
+canvas.addEventListener('pointerup', (e) => {
+  if (!down || !size) return;
+  const up = toDevice(e), ms = Date.now() - down.t;
+  if (Math.hypot(up.x - down.x, up.y - down.y) < 20) send({ type: 'tap', x: down.x, y: down.y });
+  else send({ type: 'swipe', x1: down.x, y1: down.y, x2: up.x, y2: up.y, ms });
+  down = null;
+});
+canvas.addEventListener('pointercancel', () => (down = null));
+document.querySelectorAll('button[data-key]').forEach((b) =>
+  b.addEventListener('click', () => send({ type: 'key', code: b.dataset.key })));
+</script>
+</body>
+</html>
