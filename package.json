@@ -1,9 +1,9 @@
 {
   "name": "phone-mirror",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Mirror and control a Samsung phone from an iPad browser, hosted on Railway",
+  "description": "Mirror and control a Samsung phone from an iPad browser, hosted on Netlify (Functions + Blobs)",
   "engines": { "node": ">=18" },
-  "scripts": { "start": "node server.js", "agent": "node agent.js" },
-  "dependencies": { "ws": "^8.18.0" }
+  "scripts": { "agent": "node agent.js", "dev": "netlify dev" },
+  "dependencies": { "@netlify/blobs": "^8.1.0" }
 }

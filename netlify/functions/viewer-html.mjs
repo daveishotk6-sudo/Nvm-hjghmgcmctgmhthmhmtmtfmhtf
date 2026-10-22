@@ -1,4 +1,12 @@
-<!doctype html>
+export const loginHtml = (err) => `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Samsung Mirror</title>
+<style>:root{color-scheme:dark}body{margin:0;height:100vh;display:grid;place-items:center;background:#111;color:#eee;font:17px -apple-system,system-ui,sans-serif}
+form{display:flex;flex-direction:column;gap:12px;width:min(320px,86vw)}input,button{font:inherit;padding:12px;border-radius:12px;border:0}
+input{background:#2a2a2e;color:#eee}button{background:#3478f6;color:#fff}p{margin:0;color:#ff6b6b}</style>
+<form method="post" action="/api/login"><h2 style="margin:0">Samsung Mirror</h2>${err ? '<p>Wrong password</p>' : ''}
+<input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus><button>Unlock</button></form>`;
+
+export const viewerHtml = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -26,30 +34,38 @@
 </nav>
 <script>
 const canvas = document.getElementById('screen'), ctx = canvas.getContext('2d'), msg = document.getElementById('msg');
-let ws, size = null, down = null, gotFrame = false;
+let size = null, down = null, gotFrame = false, seq = '0';
 
-function connect() {
-  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/viewer');
-  ws.onmessage = async (e) => {
-    if (typeof e.data === 'string') {
-      const m = JSON.parse(e.data);
-      if (m.type !== 'status') return;
-      size = m.w ? { w: m.w, h: m.h } : null;
-      if (!m.agent) { gotFrame = false; msg.hidden = false; msg.textContent = 'Phone agent offline. Start agent.js on your home computer.'; }
+// Long-poll loop: the server answers as soon as a newer frame exists, so we
+// always have exactly one request waiting and never queue stale frames.
+async function pull() {
+  for (;;) {
+    try {
+      const r = await fetch('/api/frame?seq=' + seq, { cache: 'no-store' });
+      if (r.status === 401) { location.reload(); return; }
+      if (r.status === 200) {
+        seq = r.headers.get('x-seq') || seq;
+        const w = +r.headers.get('x-w'), h = +r.headers.get('x-h');
+        if (w && h) size = { w, h };
+        const bmp = await createImageBitmap(await r.blob());
+        if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+        if (!gotFrame) { gotFrame = true; msg.hidden = true; }
+        continue;
+      }
+      // 204: nothing new within the poll window
+      if (r.headers.get('x-agent') !== '1') { gotFrame = false; msg.hidden = false; msg.textContent = 'Phone agent offline. Start agent.js on your home computer.'; }
       else if (!gotFrame) { msg.hidden = false; msg.textContent = 'Waiting for the phone screen…'; }
-      return;
+    } catch (e) {
+      msg.hidden = false; msg.textContent = 'Reconnecting…';
+      await new Promise((ok) => setTimeout(ok, 1500));
     }
-    const bmp = await createImageBitmap(e.data);
-    if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
-    ctx.drawImage(bmp, 0, 0);
-    bmp.close();
-    if (!gotFrame) { gotFrame = true; msg.hidden = true; }
-  };
-  ws.onclose = () => { gotFrame = false; msg.hidden = false; msg.textContent = 'Reconnecting…'; setTimeout(connect, 2000); };
+  }
 }
-connect();
+pull();
 
-const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
+const send = (o) => fetch('/api/input', { method: 'POST', body: JSON.stringify(o), keepalive: true }).catch(() => {});
 function toDevice(e) {
   const r = canvas.getBoundingClientRect();
   return { x: (e.clientX - r.left) / r.width * size.w, y: (e.clientY - r.top) / r.height * size.h };
@@ -71,4 +87,4 @@ document.querySelectorAll('button[data-key]').forEach((b) =>
   b.addEventListener('click', () => send({ type: 'key', code: b.dataset.key })));
 </script>
 </body>
-</html>
+</html>`;
